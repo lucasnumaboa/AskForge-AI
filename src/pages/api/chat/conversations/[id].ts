@@ -52,11 +52,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const attachmentsFromDB = await query(attachmentsQuery, attachmentsParams) as any[];
       
       // Formata anexos com marcadores
-      const allAttachments = attachmentsFromDB.map((att, index) => ({
-        id: `[ANEXO_${index + 1}]`,
-        url: att.file_path,
-        name: att.original_name
-      }));
+      const allAttachments = attachmentsFromDB.map((att, index) => {
+        // Garante que a URL seja válida
+        let url = att.file_path;
+        if (url && !url.startsWith('http') && !url.startsWith('/')) {
+          url = '/' + url;
+        }
+        return {
+          id: `[ANEXO_${index + 1}]`,
+          url: url,
+          name: att.original_name
+        };
+      });
 
       return res.status(200).json({
         conversation,

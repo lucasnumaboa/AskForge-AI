@@ -43,6 +43,26 @@ try:
 except ImportError:
     KEYBOARD_AVAILABLE = False
 
+# Para notificações toast (usando ttkbootstrap)
+try:
+    from ttkbootstrap.toast import ToastNotification
+    TOAST_AVAILABLE = True
+except ImportError:
+    TOAST_AVAILABLE = False
+    ToastNotification = None
+
+# Para notificações Windows com callback de clique
+try:
+    from winotify import Notification, audio
+    WINOTIFY_AVAILABLE = True
+except ImportError:
+    WINOTIFY_AVAILABLE = False
+    Notification = None
+
+# Para instância única
+import ctypes
+from ctypes import wintypes
+
 
 # ============================================================================
 # CONFIGURAÇÕES
@@ -53,6 +73,7 @@ APP_VERSION = "1.0.0"
 CONFIG_DIR = Path(os.getenv('APPDATA', os.path.expanduser('~'))) / APP_NAME
 CONFIG_FILE = CONFIG_DIR / "config.json"
 DEFAULT_HOTKEY = "ctrl+k"
+SINGLE_INSTANCE_MUTEX_NAME = "AskForgeAI_SingleInstance_Mutex"
 
 
 def get_config_path():
@@ -71,6 +92,212 @@ def load_config():
         except:
             pass
     return None
+
+
+# ============================================================================
+# INSTÂNCIA ÚNICA
+# ============================================================================
+
+class SingleInstance:
+    """Garante que apenas uma instância do aplicativo esteja rodando"""
+    
+    def __init__(self):
+        self.mutex = None
+        self.hwnd_file = CONFIG_DIR / "hwnd.txt"
+    
+    def is_already_running(self):
+        """Verifica se já existe uma instância rodando"""
+        try:
+            # Tenta criar um mutex nomeado
+            self.mutex = ctypes.windll.kernel32.CreateMutexW(
+                None, 
+                ctypes.c_bool(False), 
+                SINGLE_INSTANCE_MUTEX_NAME
+            )
+            
+            # Se o mutex já existe, outra instância está rodando
+            last_error = ctypes.windll.kernel32.GetLastError()
+            ERROR_ALREADY_EXISTS = 183
+            
+            if last_error == ERROR_ALREADY_EXISTS:
+                return True
+            
+            return False
+        except Exception as e:
+            print(f"Erro ao verificar instância única: {e}")
+            return False
+    
+    def save_hwnd(self, hwnd):
+        """Salva o HWND da janela principal"""
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            with open(self.hwnd_file, 'w') as f:
+                f.write(str(hwnd))
+        except Exception as e:
+            print(f"Erro ao salvar HWND: {e}")
+    
+    def get_existing_hwnd(self):
+        """Obtém o HWND da instância existente"""
+        try:
+            if self.hwnd_file.exists():
+                with open(self.hwnd_file, 'r') as f:
+                    return int(f.read().strip())
+        except Exception as e:
+            print(f"Erro ao ler HWND: {e}")
+        return None
+    
+    def bring_existing_to_front(self):
+        """Traz a janela existente para frente"""
+        hwnd = self.get_existing_hwnd()
+        if hwnd:
+            try:
+                user32 = ctypes.windll.user32
+                
+                # Constantes
+                SW_RESTORE = 9
+                SW_SHOW = 5
+                
+                # Verifica se a janela está minimizada
+                if user32.IsIconic(hwnd):
+                    user32.ShowWindow(hwnd, SW_RESTORE)
+                else:
+                    user32.ShowWindow(hwnd, SW_SHOW)
+                
+                # Traz para frente
+                user32.SetForegroundWindow(hwnd)
+                return True
+            except Exception as e:
+                print(f"Erro ao trazer janela para frente: {e}")
+        return False
+    
+    def release(self):
+        """Libera o mutex"""
+        if self.mutex:
+            try:
+                ctypes.windll.kernel32.ReleaseMutex(self.mutex)
+                ctypes.windll.kernel32.CloseHandle(self.mutex)
+            except:
+                pass
+
+
+def create_selectable_text(parent, text, font=('Segoe UI', 10), wraplength=500, bg=None, padding=(10, 8)):
+    """
+    Cria um widget de texto selecionável (readonly) que se comporta como um Label.
+    Permite copiar o conteúdo com Ctrl+C.
+    """
+    # Frame container para padding
+    container = ttk.Frame(parent)
+    
+    # Calcula largura em caracteres (aproximado)
+    avg_char_width = 7  # Aproximação para Segoe UI 10
+    width_chars = max(20, wraplength // avg_char_width)
+    
+    # Calcula altura inicial mais generosa
+    # Considera quebras de linha naturais + estimativa de wrap
+    natural_lines = text.count('\n') + 1
+    chars_per_line = max(1, width_chars)
+    wrapped_lines = max(1, len(text) // chars_per_line) + 1
+    estimated_height = natural_lines + wrapped_lines
+    height = min(max(estimated_height, 3), 100)  # Mínimo 3, máximo 100 linhas
+    
+    # Cria Text widget com largura fixa
+    text_widget = tk.Text(
+        container,
+        font=font,
+        wrap=WORD,
+        width=width_chars,
+        height=height,
+        borderwidth=0,
+        highlightthickness=0,
+        padx=padding[0],
+        pady=padding[1],
+        cursor="arrow"
+    )
+    
+    # Insere o texto
+    text_widget.insert('1.0', text)
+    
+    # Configura como readonly
+    text_widget.config(state=DISABLED)
+    
+    # Permite seleção e cópia
+    def enable_selection(event):
+        text_widget.config(state=NORMAL)
+        text_widget.config(cursor="ibeam")
+    
+    def disable_selection(event):
+        # Mantém seleção se houver
+        try:
+            text_widget.selection_get()
+        except:
+            text_widget.config(state=DISABLED)
+            text_widget.config(cursor="arrow")
+    
+    def copy_selection(event):
+        try:
+            text_widget.config(state=NORMAL)
+            selected = text_widget.selection_get()
+            text_widget.clipboard_clear()
+            text_widget.clipboard_append(selected)
+            text_widget.config(state=DISABLED)
+        except:
+            pass
+        return "break"
+    
+    def select_all(event):
+        text_widget.config(state=NORMAL)
+        text_widget.tag_add('sel', '1.0', 'end')
+        text_widget.config(state=DISABLED)
+        return "break"
+    
+    # Bindings
+    text_widget.bind('<Button-1>', enable_selection)
+    text_widget.bind('<FocusOut>', disable_selection)
+    text_widget.bind('<Control-c>', copy_selection)
+    text_widget.bind('<Control-a>', select_all)
+    
+    # Permite arrastar para selecionar
+    text_widget.bind('<B1-Motion>', lambda e: None)
+    
+    text_widget.pack(fill=BOTH, expand=YES)
+    
+    # Ajusta altura após renderização para contar linhas visuais (com wrap)
+    def adjust_height():
+        try:
+            text_widget.config(state=NORMAL)
+            text_widget.update_idletasks()
+            
+            # Conta linhas visuais usando dlineinfo
+            # Vai até o final do texto e conta quantas linhas de display existem
+            last_index = text_widget.index('end-1c')
+            
+            # Método mais confiável: usar count com -displaylines
+            try:
+                # Conta linhas de display do início ao fim
+                display_lines = text_widget.count('1.0', 'end', 'displaylines')
+                if display_lines and display_lines[0]:
+                    line_count = display_lines[0]
+                else:
+                    # Fallback: conta linhas lógicas
+                    line_count = int(last_index.split('.')[0])
+            except:
+                # Fallback final
+                line_count = int(last_index.split('.')[0])
+            
+            # Adiciona margem de segurança
+            line_count = max(line_count, 1) + 1
+            
+            text_widget.config(height=line_count)
+            text_widget.config(state=DISABLED)
+        except Exception as e:
+            print(f"Erro ao ajustar altura: {e}")
+    
+    # Ajusta altura com delay maior para garantir que o layout foi calculado
+    container.after(50, adjust_height)
+    # Segunda tentativa para garantir
+    container.after(200, adjust_height)
+    
+    return container
 
 
 def save_config(config):
@@ -613,6 +840,17 @@ class LoginScreen(ttk.Frame):
         self._create_widgets()
     
     def _create_widgets(self):
+        # Botão de configurações (engrenagem) no canto superior direito
+        if self.on_config_callback:
+            settings_btn = ttk.Button(
+                self,
+                text="⚙️",
+                bootstyle="link",
+                command=self._show_api_config,
+                width=3
+            )
+            settings_btn.place(relx=1.0, rely=0, anchor=NE, x=-10, y=10)
+        
         # Container central
         container = ttk.Frame(self)
         container.place(relx=0.5, rely=0.5, anchor=CENTER)
@@ -649,9 +887,35 @@ class LoginScreen(ttk.Frame):
         
         # Senha
         ttk.Label(form_frame, text="Senha:", font=('Segoe UI', 10)).pack(anchor=W, pady=(15, 2))
-        self.password_entry = ttk.Entry(form_frame, font=('Segoe UI', 11), show="•", width=35)
-        self.password_entry.pack(fill=X)
+        
+        # Frame para senha + botão olho
+        password_frame = ttk.Frame(form_frame)
+        password_frame.pack(fill=X)
+        
+        self.password_entry = ttk.Entry(password_frame, font=('Segoe UI', 11), show="•", width=32)
+        self.password_entry.pack(side=LEFT, fill=X, expand=YES)
         self.password_entry.bind('<Return>', lambda e: self._do_login())
+        
+        # Botão olho para mostrar/ocultar senha
+        self.password_visible = False
+        self.eye_btn = ttk.Button(
+            password_frame,
+            text="👁",
+            bootstyle="link",
+            command=self._toggle_password_visibility,
+            width=3
+        )
+        self.eye_btn.pack(side=LEFT, padx=(5, 0))
+        
+        # Checkbox salvar credenciais
+        self.save_credentials_var = tk.BooleanVar(value=False)
+        self.save_credentials_check = ttk.Checkbutton(
+            form_frame,
+            text="Salvar credenciais",
+            variable=self.save_credentials_var,
+            bootstyle="round-toggle"
+        )
+        self.save_credentials_check.pack(anchor=W, pady=(10, 0))
         
         # Frame de loading (spinner animado)
         self.loading_frame = ttk.Frame(form_frame)
@@ -684,8 +948,62 @@ class LoginScreen(ttk.Frame):
         )
         self.login_btn.pack(pady=(20, 0))
         
+        # Carrega credenciais salvas
+        self._load_saved_credentials()
+        
         # Foco inicial
-        self.email_entry.focus()
+        if self.email_entry.get():
+            self.password_entry.focus()
+        else:
+            self.email_entry.focus()
+    
+    def _toggle_password_visibility(self):
+        """Alterna visibilidade da senha"""
+        self.password_visible = not self.password_visible
+        if self.password_visible:
+            self.password_entry.config(show="")
+            self.eye_btn.config(text="🙈")
+        else:
+            self.password_entry.config(show="•")
+            self.eye_btn.config(text="👁")
+    
+    def _load_saved_credentials(self):
+        """Carrega credenciais salvas"""
+        try:
+            cred_file = CONFIG_DIR / "credentials.json"
+            if cred_file.exists():
+                with open(cred_file, 'r', encoding='utf-8') as f:
+                    creds = json.load(f)
+                    if creds.get('email'):
+                        self.email_entry.insert(0, creds['email'])
+                    if creds.get('password'):
+                        # Decodifica senha de base64
+                        import base64
+                        password = base64.b64decode(creds['password'].encode()).decode()
+                        self.password_entry.insert(0, password)
+                    self.save_credentials_var.set(True)
+        except Exception as e:
+            print(f"Erro ao carregar credenciais: {e}")
+    
+    def _save_credentials(self, email, password):
+        """Salva credenciais no arquivo"""
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            cred_file = CONFIG_DIR / "credentials.json"
+            
+            if self.save_credentials_var.get():
+                # Codifica senha em base64 (ofuscação básica)
+                import base64
+                encoded_password = base64.b64encode(password.encode()).decode()
+                creds = {'email': email, 'password': encoded_password}
+                with open(cred_file, 'w', encoding='utf-8') as f:
+                    json.dump(creds, f)
+            else:
+                # Remove arquivo de credenciais se existir
+                if cred_file.exists():
+                    cred_file.unlink()
+        except Exception as e:
+            print(f"Erro ao salvar credenciais: {e}")
     
     def _start_loading_animation(self):
         """Inicia animação de loading"""
@@ -739,6 +1057,10 @@ class LoginScreen(ttk.Frame):
         self._stop_loading_animation()
         
         if success:
+            # Salva credenciais se marcado
+            if email and password:
+                self._save_credentials(email, password)
+            
             self.login_btn.config(state=NORMAL)
             self.status_label.config(text="", foreground='gray')
             self.on_login_callback(result)
@@ -794,6 +1116,16 @@ class LoginScreen(ttk.Frame):
         # Notifica o app principal para salvar a configuração
         if self.on_config_callback:
             self.on_config_callback(new_url)
+    
+    def _show_api_config(self):
+        """Mostra diálogo para configurar URL da API"""
+        dialog = ConnectionErrorDialog(
+            self.winfo_toplevel(),
+            self.api_client.base_url,
+            self._on_new_url_configured
+        )
+        # Muda o título do diálogo
+        dialog.title("Configurar API")
 
 
 # ============================================================================
@@ -803,12 +1135,13 @@ class LoginScreen(ttk.Frame):
 class ChatScreen(ttk.Frame):
     """Tela principal do chat"""
     
-    def __init__(self, parent, api_client, user, on_logout_callback, on_settings_callback):
+    def __init__(self, parent, api_client, user, on_logout_callback, on_settings_callback, on_notification_callback=None):
         super().__init__(parent)
         self.api_client = api_client
         self.user = user
         self.on_logout_callback = on_logout_callback
         self.on_settings_callback = on_settings_callback
+        self.on_notification_callback = on_notification_callback  # Callback para notificações toast
         
         self.conversations = []
         self.active_conversation = None
@@ -1366,11 +1699,21 @@ class ChatScreen(ttk.Frame):
         
         btn = ttk.Button(
             item_frame,
-            text=conv.get('titulo', 'Sem título')[:30],
+            text=conv.get('titulo', 'Sem título')[:25],
             bootstyle=f"{style}-outline" if not is_active else style,
             command=lambda c=conv: self._select_conversation(c)
         )
         btn.pack(side=LEFT, fill=X, expand=YES)
+        
+        # Botão de lixeira para excluir
+        delete_btn = ttk.Button(
+            item_frame,
+            text="🗑️",
+            bootstyle="danger-link",
+            command=lambda c=conv: self._delete_conversation(c),
+            width=2
+        )
+        delete_btn.pack(side=RIGHT, padx=(2, 0))
         
         # Menu de contexto
         menu = tk.Menu(btn, tearoff=0)
@@ -1378,22 +1721,6 @@ class ChatScreen(ttk.Frame):
         menu.add_command(label="Excluir", command=lambda c=conv: self._delete_conversation(c))
         
         btn.bind('<Button-3>', lambda e, m=menu: m.post(e.x_root, e.y_root))
-        
-        # Info do módulo
-        module_name = conv.get('module_nome', '')
-        system_name = conv.get('system_nome', '')
-        
-        if module_name:
-            info_text = module_name
-            if system_name:
-                info_text += f" → {system_name}"
-            
-            ttk.Label(
-                item_frame,
-                text=info_text[:20],
-                font=('Segoe UI', 8),
-                foreground='gray'
-            ).pack(side=LEFT, padx=(5, 0))
     
     def _show_welcome_screen(self):
         """Mostra tela de boas-vindas"""
@@ -1798,16 +2125,15 @@ class ChatScreen(ttk.Frame):
             
             for part in parts:
                 if part['type'] == 'text':
-                    # Texto normal
-                    text_label = ttk.Label(
+                    # Texto normal - selecioável
+                    text_container = create_selectable_text(
                         bubble,
-                        text=part['content'],
+                        part['content'],
                         font=('Segoe UI', 10),
                         wraplength=500,
-                        justify=LEFT,
                         padding=(10, 8)
                     )
-                    text_label.pack(anchor=W)
+                    text_container.pack(anchor=W, fill=X)
                     
                 elif part['type'] == 'image':
                     # Imagem
@@ -1918,28 +2244,26 @@ class ChatScreen(ttk.Frame):
                 except Exception as e:
                     print(f"Erro ao exibir imagem do usuário: {e}")
             
-            # Texto da mensagem (se houver)
+            # Texto da mensagem (se houver) - selecioável
             if content and content != "[Imagem enviada]":
-                text_label = ttk.Label(
+                text_container = create_selectable_text(
                     bubble,
-                    text=content,
+                    content,
                     font=('Segoe UI', 10),
                     wraplength=500,
-                    justify=LEFT,
                     padding=(10, 8)
                 )
-                text_label.pack()
+                text_container.pack(fill=X)
             elif not image_data:
-                # Só mostra texto se não tiver imagem
-                text_label = ttk.Label(
+                # Só mostra texto se não tiver imagem - selecioável
+                text_container = create_selectable_text(
                     bubble,
-                    text=content,
+                    content,
                     font=('Segoe UI', 10),
                     wraplength=500,
-                    justify=LEFT,
                     padding=(10, 8)
                 )
-                text_label.pack()
+                text_container.pack(fill=X)
         
         # Botões de feedback (apenas para mensagens do assistente)
         if role == 'assistant' and user_message:
@@ -2162,9 +2486,15 @@ class ChatScreen(ttk.Frame):
             used_knowledge_ids = result.get('used_knowledge_ids', [])
             
             # Adiciona resposta do assistente
-            assistant_msg = {'role': 'assistant', 'content': result.get('response', ''), 'used_knowledge_ids': used_knowledge_ids}
+            response_text = result.get('response', '')
+            assistant_msg = {'role': 'assistant', 'content': response_text, 'used_knowledge_ids': used_knowledge_ids}
             self.messages.append(assistant_msg)
             self._add_message_bubble(assistant_msg, user_message=user_message)
+            
+            # Mostra notificação toast se a janela estiver minimizada/fechada
+            if self.on_notification_callback:
+                conv_id = self.active_conversation.get('id') if self.active_conversation else None
+                self.on_notification_callback("AskForge-AI", response_text, conv_id)
             
             # Scroll para o final
             self.msg_canvas.update_idletasks()
@@ -2370,11 +2700,13 @@ class SettingsDialog(ttk.Toplevel):
 class AskForgeApp:
     """Aplicação principal"""
     
-    def __init__(self):
+    def __init__(self, single_instance=None):
         self.config = load_config()
         self.api_client = None
         self.tray_icon = None
         self.hotkey_registered = False
+        self.single_instance = single_instance
+        self.is_window_visible = True  # Rastreia se a janela está visível
         
         # Cria janela principal
         self.root = ttk.Window(
@@ -2402,15 +2734,139 @@ class AskForgeApp:
         # Handler de fechamento
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         
+        # Salva o HWND para instância única
+        self.root.update_idletasks()
+        if self.single_instance:
+            try:
+                hwnd = int(self.root.winfo_id())
+                # No Windows, precisamos do HWND real da janela toplevel
+                import ctypes
+                hwnd = ctypes.windll.user32.GetParent(hwnd)
+                if hwnd == 0:
+                    hwnd = int(self.root.winfo_id())
+                self.single_instance.save_hwnd(hwnd)
+            except Exception as e:
+                print(f"Erro ao salvar HWND: {e}")
+        
         # Container principal
         self.main_container = ttk.Frame(self.root)
         self.main_container.pack(fill=BOTH, expand=YES)
+        
+        # Bind para rastrear visibilidade da janela
+        self.root.bind('<Map>', self._on_window_show)
+        self.root.bind('<Unmap>', self._on_window_hide)
         
         # Verifica configuração
         if not self.config:
             self._show_config_screen()
         else:
             self._init_with_config(self.config)
+    
+    def _on_window_show(self, event):
+        """Callback quando janela é mostrada"""
+        self.is_window_visible = True
+        print(f"[DEBUG] Janela visível: {self.is_window_visible}")
+    
+    def _on_window_hide(self, event):
+        """Callback quando janela é escondida/minimizada"""
+        self.is_window_visible = False
+        print(f"[DEBUG] Janela visível: {self.is_window_visible}")
+    
+    def _check_window_visible(self):
+        """Verifica se a janela está realmente visível"""
+        try:
+            # Verifica estado da janela
+            state = self.root.state()
+            # withdrawn = minimizado para bandeja, iconic = minimizado normal
+            is_visible = state == 'normal' and self.root.winfo_viewable()
+            return is_visible
+        except:
+            return True
+    
+    def show_notification(self, title, message, conversation_id=None):
+        """Mostra notificação toast - ao clicar abre a conversa"""
+        # Verifica se a janela está visível
+        is_visible = self._check_window_visible()
+        
+        if not is_visible:
+            try:
+                # Trunca mensagem se muito longa
+                if len(message) > 250:
+                    message = message[:247] + "..."
+                
+                # Armazena o ID da conversa para abrir ao clicar
+                self._pending_conversation_id = conversation_id
+                
+                # Tenta usar winotify (suporta callback de clique)
+                if WINOTIFY_AVAILABLE:
+                    try:
+                        toast = Notification(
+                            app_id=APP_NAME,
+                            title=title,
+                            msg=message,
+                            duration="short"
+                        )
+                        toast.set_audio(audio.Default, loop=False)
+                        
+                        # Adiciona ação para abrir a conversa
+                        toast.add_actions(label="Abrir Conversa", launch=f"askforge://open/{conversation_id}" if conversation_id else "askforge://open")
+                        
+                        # Callback quando clica na notificação
+                        toast.on_click = lambda: self._on_notification_click(conversation_id)
+                        
+                        toast.show()
+                        return
+                    except Exception as e:
+                        print(f"Erro ao mostrar notificação winotify: {e}")
+                
+                # Fallback para ttkbootstrap toast (sem callback de clique)
+                if TOAST_AVAILABLE:
+                    toast = ToastNotification(
+                        title=title,
+                        message=message + "\n\n(Clique no ícone da bandeja para abrir)",
+                        duration=5000,
+                        bootstyle="info",
+                        alert=True,
+                        position=(50, 50, "se")
+                    )
+                    toast.show_toast()
+                
+            except Exception as e:
+                print(f"Erro ao mostrar notificação: {e}")
+    
+    def _on_notification_click(self, conversation_id=None):
+        """Callback quando clica na notificação - abre a conversa"""
+        def open_conversation():
+            try:
+                # Restaura a janela se estiver minimizada
+                self.root.deiconify()
+                
+                # Força a janela para o estado normal (não minimizado)
+                self.root.state('normal')
+                
+                # Traz para frente
+                self.root.lift()
+                self.root.attributes('-topmost', True)
+                self.root.after(100, lambda: self.root.attributes('-topmost', False))
+                
+                # Foca na janela
+                self.root.focus_force()
+                
+                print(f"[DEBUG] Janela restaurada. Estado: {self.root.state()}")
+                
+                # Se tem ID de conversa e tela de chat está ativa, abre a conversa
+                if conversation_id and hasattr(self, 'chat_screen') and self.chat_screen:
+                    # Busca a conversa na lista
+                    for conv in self.chat_screen.conversations:
+                        if conv.get('id') == conversation_id:
+                            print(f"[DEBUG] Abrindo conversa: {conv.get('titulo', 'Sem título')}")
+                            self.chat_screen._select_conversation(conv)
+                            break
+            except Exception as e:
+                print(f"[DEBUG] Erro ao abrir janela: {e}")
+        
+        # Executa na thread principal
+        self.root.after(0, open_conversation)
     
     def _show_config_screen(self):
         """Mostra tela de configuração inicial"""
@@ -2471,7 +2927,8 @@ class AskForgeApp:
             self.api_client,
             user,
             self._on_logout,
-            self._show_settings
+            self._show_settings,
+            on_notification_callback=self.show_notification
         )
         self.chat_screen.pack(fill=BOTH, expand=YES)
     
@@ -2615,5 +3072,21 @@ class AskForgeApp:
 # ============================================================================
 
 if __name__ == '__main__':
-    app = AskForgeApp()
-    app.run()
+    # Verifica se já existe uma instância rodando
+    single_instance = SingleInstance()
+    
+    if single_instance.is_already_running():
+        # Tenta trazer a janela existente para frente
+        print("Aplicativo já está em execução. Trazendo para frente...")
+        if single_instance.bring_existing_to_front():
+            print("Janela existente ativada.")
+        else:
+            print("Não foi possível ativar a janela existente.")
+        sys.exit(0)
+    
+    try:
+        app = AskForgeApp(single_instance=single_instance)
+        app.run()
+    finally:
+        # Libera o mutex ao sair
+        single_instance.release()

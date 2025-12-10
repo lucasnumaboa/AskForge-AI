@@ -140,6 +140,11 @@ export default function ChatPage() {
         setShowModuleSelect(false);
         setShowSystemSelect(false);
         
+        // Carrega anexos da base de conhecimento
+        if (data.all_knowledge_attachments) {
+          setKnowledgeAttachments(data.all_knowledge_attachments);
+        }
+        
         // Busca imagens da base de conhecimento do módulo/sistema
         if (data.conversation.module_id) {
           fetchKnowledgeImages(data.conversation.module_id, data.conversation.system_id);
@@ -574,9 +579,17 @@ export default function ChatPage() {
         // É um anexo
         const markerId = `[ANEXO_${match[3]}]`;
         const attachment = knowledgeAttachments.find(att => att.id === markerId);
-        if (attachment) {
-          parts.push({ type: 'attachment', id: markerId, url: attachment.url, name: attachment.name });
+        if (attachment && attachment.url) {
+          // Garante que a URL seja válida
+          let attachmentUrl = attachment.url;
+          // Se a URL não começa com http ou /, adiciona /
+          if (!attachmentUrl.startsWith('http') && !attachmentUrl.startsWith('/')) {
+            attachmentUrl = '/' + attachmentUrl;
+          }
+          parts.push({ type: 'attachment', id: markerId, url: attachmentUrl, name: attachment.name });
         } else {
+          // Anexo não encontrado - mostra como texto com aviso
+          console.warn(`Anexo não encontrado: ${markerId}. Anexos disponíveis:`, knowledgeAttachments);
           parts.push(match[0]);
         }
       }

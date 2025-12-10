@@ -13,3 +13,6 @@ Pillow>=10.0.0
 
 # Atalhos globais de teclado
 keyboard>=0.13.5
+
+# Notificações Windows com callback de clique
+winotify>=1.1.0

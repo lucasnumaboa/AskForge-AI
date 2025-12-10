@@ -393,6 +393,56 @@ Não adicione números, explicações ou qualquer outro texto.`;
   }
 }
 
+// Função para gerar título da conversa baseado na primeira mensagem
+async function generateConversationTitle(
+  model: LLMModel,
+  userMessage: string,
+  moduleName: string,
+  systemName: string
+): Promise<string> {
+  const titlePrompt = `Você é um assistente que cria títulos curtos e descritivos para conversas.
+
+CONTEXTO:
+- Módulo: ${moduleName}${systemName ? ` - ${systemName}` : ''}
+- Primeira mensagem do usuário: "${userMessage}"
+
+INSTRUÇÕES:
+- Crie um título CURTO (máximo 50 caracteres) que descreva o assunto da conversa
+- O título deve ser claro e objetivo
+- NÃO use aspas no título
+- NÃO inclua prefixos como "Título:" ou "Assunto:"
+- Apenas retorne o título, nada mais
+
+EXEMPLO:
+Se a mensagem for "Como cadastrar um cliente no sistema?", um bom título seria: "Cadastro de Cliente"`;
+
+  const messages = [
+    { role: 'user', content: titlePrompt }
+  ];
+
+  try {
+    const response = await callLLMProvider(model, messages, false);
+    let title = response.trim();
+    
+    // Remove aspas se houver
+    title = title.replace(/^["']|["']$/g, '');
+    
+    // Limita a 50 caracteres
+    if (title.length > 50) {
+      title = title.substring(0, 47) + '...';
+    }
+    
+    console.log('=== TÍTULO GERADO ===');
+    console.log('Título:', title);
+    
+    return title;
+  } catch (error) {
+    console.error('Erro ao gerar título:', error);
+    // Em caso de erro, retorna título padrão
+    return `Chat - ${moduleName}${systemName ? ` - ${systemName}` : ''}`;
+  }
+}
+
 // Função para construir o prompt do sistema
 function buildSystemPrompt(config: LLMConfig | null, knowledgeDescriptions: string, hasKnowledgeImages: boolean, hasKnowledgeAttachments: boolean = false): string {
   const empresaNome = config?.nome_empresa || 'a empresa';
@@ -504,6 +554,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let moduleId = module_id;
     let systemId = system_id;
 
+    // Flag para indicar se é uma nova conversa (para gerar título por IA)
+    let isNewConversation = false;
+    let moduleName = '';
+    let systemName = '';
+
     // Se não tem conversa, precisa do module_id para criar
     if (!conversationId) {
       if (!moduleId) {
@@ -512,19 +567,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       // Busca o nome do módulo e sistema
       const modules = await query('SELECT nome FROM modules WHERE id = ?', [moduleId]) as any[];
-      const moduleName = modules[0]?.nome || 'Módulo';
+      moduleName = modules[0]?.nome || 'Módulo';
       
-      let systemName = '';
       if (systemId) {
         const systems = await query('SELECT nome FROM systems WHERE id = ?', [systemId]) as any[];
-        systemName = systems[0]?.nome ? ` - ${systems[0].nome}` : '';
+        systemName = systems[0]?.nome || '';
       }
 
+      // Cria conversa com título temporário (será atualizado após gerar título por IA)
       const result = await query(
         'INSERT INTO chat_conversations (user_id, module_id, system_id, titulo) VALUES (?, ?, ?, ?)',
-        [userId, moduleId, systemId || null, `Chat - ${moduleName}${systemName}`]
+        [userId, moduleId, systemId || null, `Chat - ${moduleName}${systemName ? ` - ${systemName}` : ''}`]
       ) as any;
       conversationId = result.insertId;
+      isNewConversation = true;
     } else {
       // Verifica se a conversa pertence ao usuário e pega o module_id e system_id
       const conversations = await query(
@@ -667,9 +723,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           knowledgeDescriptions += `Anexos disponíveis:\n`;
           docAttachments.forEach(att => {
             const attachId = `[ANEXO_${attachmentCounter}]`;
+            // Garante que a URL seja válida
+            let attachUrl = att.file_path;
+            if (attachUrl && !attachUrl.startsWith('http') && !attachUrl.startsWith('/')) {
+              attachUrl = '/' + attachUrl;
+            }
             allAttachments.push({
               id: attachId,
-              url: att.file_path,
+              url: attachUrl,
               name: att.original_name,
               docTitle: kb.titulo,
               position: attachmentCounter
@@ -824,6 +885,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       [conversationId]
     );
 
+    // Se é uma nova conversa, gera título por IA baseado na primeira mensagem
+    let generatedTitle = null;
+    if (isNewConversation) {
+      try {
+        generatedTitle = await generateConversationTitle(activeModel, message, moduleName, systemName);
+        // Atualiza o título da conversa
+        await query(
+          'UPDATE chat_conversations SET titulo = ? WHERE id = ?',
+          [generatedTitle, conversationId]
+        );
+      } catch (titleError) {
+        console.error('Erro ao gerar título da conversa:', titleError);
+        // Mantém o título padrão em caso de erro
+      }
+    }
+
     // IDs dos documentos que foram realmente enviados ao modelo
     const usedKnowledgeIds = filteredKnowledgeBase.map(kb => kb.id);
 
@@ -836,7 +913,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       knowledge_images: responseImages,
       all_knowledge_images: allImages.map(img => ({ id: img.id, url: img.url })),
       all_knowledge_attachments: allAttachments.map(att => ({ id: att.id, url: att.url, name: att.name })),
-      used_knowledge_ids: usedKnowledgeIds
+      used_knowledge_ids: usedKnowledgeIds,
+      generated_title: generatedTitle
     });
 
   } catch (error: any) {
