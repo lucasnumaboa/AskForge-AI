@@ -88,11 +88,26 @@ def create_tables(cursor):
     """)
     print("✓ Tabela 'module_access' criada com sucesso!")
     
+    # Tabela de sistemas (dentro de cada módulo)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS systems (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            module_id INT NOT NULL,
+            nome VARCHAR(255) NOT NULL,
+            descricao TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (module_id) REFERENCES modules(id) ON DELETE CASCADE,
+            UNIQUE KEY unique_system_module (nome, module_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """)
+    print("✓ Tabela 'systems' criada com sucesso!")
+    
     # Tabela de base de conhecimento
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS knowledge_base (
             id INT AUTO_INCREMENT PRIMARY KEY,
             module_id INT NOT NULL,
+            system_id INT,
             created_by INT NOT NULL,
             titulo VARCHAR(500) NOT NULL,
             conteudo LONGTEXT,
@@ -100,6 +115,7 @@ def create_tables(cursor):
             data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             data_atualizacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             FOREIGN KEY (module_id) REFERENCES modules(id) ON DELETE CASCADE,
+            FOREIGN KEY (system_id) REFERENCES systems(id) ON DELETE SET NULL,
             FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """)
@@ -156,11 +172,13 @@ def create_tables(cursor):
             id INT AUTO_INCREMENT PRIMARY KEY,
             user_id INT NOT NULL,
             module_id INT NOT NULL,
+            system_id INT,
             titulo VARCHAR(255) DEFAULT 'Nova conversa',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-            FOREIGN KEY (module_id) REFERENCES modules(id) ON DELETE CASCADE
+            FOREIGN KEY (module_id) REFERENCES modules(id) ON DELETE CASCADE,
+            FOREIGN KEY (system_id) REFERENCES systems(id) ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """)
     print("✓ Tabela 'chat_conversations' criada com sucesso!")
@@ -173,11 +191,31 @@ def create_tables(cursor):
             role ENUM('user', 'assistant', 'system') NOT NULL,
             content LONGTEXT NOT NULL,
             image_url VARCHAR(500),
+            file_url VARCHAR(500),
+            file_name VARCHAR(255),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (conversation_id) REFERENCES chat_conversations(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """)
     print("✓ Tabela 'chat_messages' criada com sucesso!")
+    
+    # Tabela de feedback das respostas do chat
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS chat_feedback (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            conversation_id INT NOT NULL,
+            user_id INT NOT NULL,
+            user_message LONGTEXT NOT NULL,
+            assistant_response LONGTEXT NOT NULL,
+            conversation_history LONGTEXT,
+            knowledge_base_sent LONGTEXT,
+            feedback ENUM('positive', 'negative') NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (conversation_id) REFERENCES chat_conversations(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """)
+    print("✓ Tabela 'chat_feedback' criada com sucesso!")
 
 def create_admin_user(cursor):
     """Cria o usuário administrador padrão"""

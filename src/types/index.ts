@@ -22,6 +22,16 @@ export interface Module {
   created_at?: Date;
 }
 
+export interface System {
+  id: number;
+  module_id: number;
+  nome: string;
+  descricao?: string;
+  created_at?: Date;
+  // Campos extras para joins
+  module_nome?: string;
+}
+
 export interface ModuleAccess {
   id: number;
   user_id: number;
@@ -31,6 +41,7 @@ export interface ModuleAccess {
 export interface KnowledgeBase {
   id: number;
   module_id: number;
+  system_id?: number;
   created_by: number;
   titulo: string;
   conteudo?: string;
@@ -39,6 +50,7 @@ export interface KnowledgeBase {
   data_atualizacao?: Date;
   // Campos extras para joins
   module_nome?: string;
+  system_nome?: string;
   autor_nome?: string;
 }
 
@@ -77,10 +89,12 @@ export interface ChatConversation {
   id: number;
   user_id: number;
   module_id: number;
+  system_id?: number;
   titulo: string;
   created_at?: Date;
   updated_at?: Date;
   module_nome?: string;
+  system_nome?: string;
 }
 
 export interface ChatMessage {
@@ -89,6 +103,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
   image_url?: string;
+  file_url?: string;
+  file_name?: string;
   created_at?: Date;
 }
 

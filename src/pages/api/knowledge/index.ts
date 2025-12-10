@@ -14,25 +14,32 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (req.method === 'GET') {
     try {
-      const { module_id } = req.query;
+      const { module_id, system_id } = req.query;
 
       let knowledge;
       if (user.grupo === 'adm') {
         if (module_id) {
-          knowledge = await query<any[]>(
-            `SELECT kb.*, m.nome as module_nome, u.nome as autor_nome
+          let queryStr = `SELECT kb.*, m.nome as module_nome, s.nome as system_nome, u.nome as autor_nome
              FROM knowledge_base kb
              LEFT JOIN modules m ON kb.module_id = m.id
+             LEFT JOIN systems s ON kb.system_id = s.id
              LEFT JOIN users u ON kb.created_by = u.id
-             WHERE kb.module_id = ?
-             ORDER BY kb.data_criacao DESC`,
-            [module_id]
-          );
+             WHERE kb.module_id = ?`;
+          const params: any[] = [module_id];
+          
+          if (system_id) {
+            queryStr += ` AND kb.system_id = ?`;
+            params.push(system_id);
+          }
+          
+          queryStr += ` ORDER BY kb.data_criacao DESC`;
+          knowledge = await query<any[]>(queryStr, params);
         } else {
           knowledge = await query<any[]>(
-            `SELECT kb.*, m.nome as module_nome, u.nome as autor_nome
+            `SELECT kb.*, m.nome as module_nome, s.nome as system_nome, u.nome as autor_nome
              FROM knowledge_base kb
              LEFT JOIN modules m ON kb.module_id = m.id
+             LEFT JOIN systems s ON kb.system_id = s.id
              LEFT JOIN users u ON kb.created_by = u.id
              ORDER BY kb.data_criacao DESC`
           );
@@ -48,21 +55,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             return res.status(403).json({ error: 'Acesso negado' });
           }
 
-          knowledge = await query<any[]>(
-            `SELECT kb.*, m.nome as module_nome, u.nome as autor_nome
+          let queryStr = `SELECT kb.*, m.nome as module_nome, s.nome as system_nome, u.nome as autor_nome
              FROM knowledge_base kb
              LEFT JOIN modules m ON kb.module_id = m.id
+             LEFT JOIN systems s ON kb.system_id = s.id
              LEFT JOIN users u ON kb.created_by = u.id
-             WHERE kb.module_id = ?
-             ORDER BY kb.data_criacao DESC`,
-            [module_id]
-          );
+             WHERE kb.module_id = ?`;
+          const params: any[] = [module_id];
+          
+          if (system_id) {
+            queryStr += ` AND kb.system_id = ?`;
+            params.push(system_id);
+          }
+          
+          queryStr += ` ORDER BY kb.data_criacao DESC`;
+          knowledge = await query<any[]>(queryStr, params);
         } else {
           knowledge = await query<any[]>(
-            `SELECT kb.*, m.nome as module_nome, u.nome as autor_nome
+            `SELECT kb.*, m.nome as module_nome, s.nome as system_nome, u.nome as autor_nome
              FROM knowledge_base kb
              INNER JOIN module_access ma ON kb.module_id = ma.module_id
              LEFT JOIN modules m ON kb.module_id = m.id
+             LEFT JOIN systems s ON kb.system_id = s.id
              LEFT JOIN users u ON kb.created_by = u.id
              WHERE ma.user_id = ?
              ORDER BY kb.data_criacao DESC`,
@@ -78,7 +92,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   } else if (req.method === 'POST') {
     try {
-      const { module_id, titulo, conteudo, tags } = req.body;
+      const { module_id, system_id, titulo, conteudo, tags } = req.body;
 
       // Verifica acesso ao módulo
       if (user.grupo !== 'adm') {
@@ -101,9 +115,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       const result = await query<any>(
-        `INSERT INTO knowledge_base (module_id, created_by, titulo, conteudo, tags)
-         VALUES (?, ?, ?, ?, ?)`,
-        [module_id, user.id, titulo, conteudo || '', tags || '']
+        `INSERT INTO knowledge_base (module_id, system_id, created_by, titulo, conteudo, tags)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [module_id, system_id || null, user.id, titulo, conteudo || '', tags || '']
       );
 
       res.status(201).json({ id: result.insertId, message: 'Documento criado com sucesso' });

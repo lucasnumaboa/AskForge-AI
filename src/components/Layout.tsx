@@ -16,6 +16,7 @@ import {
   ChevronRight,
   Layers,
   Bot,
+  ThumbsUp,
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -116,6 +117,17 @@ export default function Layout({ children }: LayoutProps) {
               >
                 <Bot className="w-5 h-5" />
                 {sidebarOpen && <span>Modelos LLM</span>}
+              </Link>
+              <Link
+                href="/admin/feedbacks"
+                className={`flex items-center gap-3 px-3 py-2 rounded-lg transition ${
+                  router.pathname.startsWith('/admin/feedbacks')
+                    ? 'bg-blue-50 text-blue-600'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                <ThumbsUp className="w-5 h-5" />
+                {sidebarOpen && <span>Feedbacks</span>}
               </Link>
             </>
           )}

@@ -3,8 +3,8 @@ import { useRouter } from 'next/router';
 import { useEffect, useState, useRef } from 'react';
 import Head from 'next/head';
 import Layout from '@/components/Layout';
-import { ArrowLeft, Save, Upload, X } from 'lucide-react';
-import { KnowledgeBase } from '@/types';
+import { ArrowLeft, Save, Upload, X, Trash2, Download } from 'lucide-react';
+import { KnowledgeBase, Attachment, System } from '@/types';
 
 export default function EditKnowledgePage() {
   const { data: session, status } = useSession();
@@ -13,15 +13,18 @@ export default function EditKnowledgePage() {
   const contentRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [knowledge, setKnowledge] = useState<KnowledgeBase | null>(null);
+  const [knowledge, setKnowledge] = useState<KnowledgeBase & { attachments?: Attachment[] } | null>(null);
+  const [systems, setSystems] = useState<System[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState({
     titulo: '',
     conteudo: '',
     tags: '',
+    system_id: '',
   });
   const [attachments, setAttachments] = useState<File[]>([]);
+  const [existingAttachments, setExistingAttachments] = useState<Attachment[]>([]);
   const [error, setError] = useState('');
 
   const user = session?.user as any;
@@ -37,6 +40,18 @@ export default function EditKnowledgePage() {
       fetchKnowledge();
     }
   }, [session, status, router, id]);
+
+  const fetchSystems = async (moduleId: number) => {
+    try {
+      const res = await fetch(`/api/systems?module_id=${moduleId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSystems(data);
+      }
+    } catch (error) {
+      console.error('Error fetching systems:', error);
+    }
+  };
 
   useEffect(() => {
     if (knowledge && contentRef.current) {
@@ -54,7 +69,15 @@ export default function EditKnowledgePage() {
           titulo: data.titulo,
           conteudo: data.conteudo || '',
           tags: data.tags || '',
+          system_id: data.system_id ? String(data.system_id) : '',
         });
+        // Busca sistemas do módulo
+        if (data.module_id) {
+          fetchSystems(data.module_id);
+        }
+        if (data.attachments) {
+          setExistingAttachments(data.attachments);
+        }
       } else if (res.status === 403) {
         router.push('/modules');
       }
@@ -88,38 +111,48 @@ export default function EditKnowledgePage() {
       reader.onload = async (e) => {
         const base64 = e.target?.result as string;
         
-        const res = await fetch('/api/upload-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: base64 }),
-        });
+        try {
+          const res = await fetch('/api/upload-image', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: base64 }),
+          });
 
-        if (res.ok) {
-          const data = await res.json();
-          if (contentRef.current) {
-            const img = document.createElement('img');
-            img.src = data.url;
-            img.style.maxWidth = '100%';
-            
-            const selection = window.getSelection();
-            if (selection && selection.rangeCount > 0) {
-              const range = selection.getRangeAt(0);
-              range.insertNode(img);
-              range.collapse(false);
-            } else {
-              contentRef.current.appendChild(img);
+          if (res.ok) {
+            const data = await res.json();
+            if (contentRef.current) {
+              const img = document.createElement('img');
+              img.src = data.url;
+              img.style.maxWidth = '100%';
+              
+              const selection = window.getSelection();
+              if (selection && selection.rangeCount > 0) {
+                const range = selection.getRangeAt(0);
+                range.insertNode(img);
+                range.collapse(false);
+              } else {
+                contentRef.current.appendChild(img);
+              }
+              
+              setFormData(prev => ({
+                ...prev,
+                conteudo: contentRef.current?.innerHTML || ''
+              }));
             }
-            
-            setFormData(prev => ({
-              ...prev,
-              conteudo: contentRef.current?.innerHTML || ''
-            }));
+          } else {
+            const errorData = await res.json();
+            console.error('Erro ao fazer upload da imagem:', errorData);
+            setError('Erro ao fazer upload da imagem: ' + (errorData.error || 'Erro desconhecido'));
           }
+        } catch (fetchError) {
+          console.error('Erro na requisição de upload:', fetchError);
+          setError('Erro ao fazer upload da imagem');
         }
       };
       reader.readAsDataURL(file);
     } catch (error) {
       console.error('Error uploading image:', error);
+      setError('Erro ao processar imagem');
     }
   };
 
@@ -143,6 +176,26 @@ export default function EditKnowledgePage() {
     setAttachments(prev => prev.filter((_, i) => i !== index));
   };
 
+  const removeExistingAttachment = async (attachmentId: number) => {
+    if (!confirm('Tem certeza que deseja excluir este anexo?')) return;
+
+    try {
+      const res = await fetch(`/api/attachments?id=${attachmentId}`, {
+        method: 'DELETE',
+      });
+
+      if (res.ok) {
+        setExistingAttachments(prev => prev.filter(a => a.id !== attachmentId));
+      } else {
+        const data = await res.json();
+        setError(data.error || 'Erro ao excluir anexo');
+      }
+    } catch (error) {
+      console.error('Erro ao excluir anexo:', error);
+      setError('Erro ao excluir anexo');
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -156,6 +209,27 @@ export default function EditKnowledgePage() {
       });
 
       if (res.ok) {
+        // Upload de anexos se houver
+        if (attachments.length > 0) {
+          const formDataUpload = new FormData();
+          attachments.forEach(file => {
+            formDataUpload.append('files', file);
+          });
+          formDataUpload.append('knowledge_id', id as string);
+
+          const attachRes = await fetch('/api/attachments', {
+            method: 'POST',
+            body: formDataUpload,
+          });
+
+          if (!attachRes.ok) {
+            const attachError = await attachRes.json();
+            setError(attachError.error || 'Erro ao fazer upload dos anexos');
+            setSaving(false);
+            return;
+          }
+        }
+
         router.push(`/knowledge/${id}`);
       } else {
         const data = await res.json();
@@ -206,6 +280,31 @@ export default function EditKnowledgePage() {
             )}
 
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-6">
+              {/* Seleção de Sistema (obrigatório se módulo tem sistemas) */}
+              {systems.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Sistema <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={formData.system_id}
+                    onChange={(e) => setFormData({ ...formData, system_id: e.target.value })}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-white"
+                    required
+                  >
+                    <option value="">Selecione um sistema</option>
+                    {systems.map((sys) => (
+                      <option key={sys.id} value={sys.id}>
+                        {sys.nome}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Selecione o sistema ao qual este documento pertence
+                  </p>
+                </div>
+              )}
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Título
@@ -249,6 +348,43 @@ export default function EditKnowledgePage() {
                   placeholder="Ex: financeiro, relatório, mensal"
                 />
               </div>
+
+              {/* Anexos Existentes */}
+              {existingAttachments.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Anexos Existentes
+                  </label>
+                  <div className="space-y-2">
+                    {existingAttachments.map((attachment) => (
+                      <div
+                        key={attachment.id}
+                        className="flex items-center justify-between p-3 bg-blue-50 rounded-lg"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-gray-700">{attachment.original_name}</span>
+                          <a
+                            href={attachment.file_path}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:text-blue-800"
+                          >
+                            <Download className="w-4 h-4" />
+                          </a>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeExistingAttachment(attachment.id)}
+                          className="p-1 text-red-600 hover:bg-red-50 rounded"
+                          title="Excluir anexo"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">

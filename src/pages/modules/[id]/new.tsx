@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from 'react';
 import Head from 'next/head';
 import Layout from '@/components/Layout';
 import { ArrowLeft, Save, Upload, X, Image as ImageIcon } from 'lucide-react';
-import { Module } from '@/types';
+import { Module, System } from '@/types';
 
 export default function NewKnowledgePage() {
   const { data: session, status } = useSession();
@@ -14,12 +14,14 @@ export default function NewKnowledgePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [module, setModule] = useState<Module | null>(null);
+  const [systems, setSystems] = useState<System[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState({
     titulo: '',
     conteudo: '',
     tags: '',
+    system_id: '',
   });
   const [attachments, setAttachments] = useState<File[]>([]);
   const [error, setError] = useState('');
@@ -35,6 +37,7 @@ export default function NewKnowledgePage() {
 
     if (id) {
       fetchModule();
+      fetchSystems();
     }
   }, [session, status, router, id]);
 
@@ -51,6 +54,18 @@ export default function NewKnowledgePage() {
       console.error('Error fetching module:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchSystems = async () => {
+    try {
+      const res = await fetch(`/api/systems?module_id=${id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSystems(data);
+      }
+    } catch (error) {
+      console.error('Error fetching systems:', error);
     }
   };
 
@@ -77,40 +92,50 @@ export default function NewKnowledgePage() {
       reader.onload = async (e) => {
         const base64 = e.target?.result as string;
         
-        const res = await fetch('/api/upload-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: base64 }),
-        });
+        try {
+          const res = await fetch('/api/upload-image', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: base64 }),
+          });
 
-        if (res.ok) {
-          const data = await res.json();
-          // Insere a imagem no editor
-          if (contentRef.current) {
-            const img = document.createElement('img');
-            img.src = data.url;
-            img.style.maxWidth = '100%';
-            
-            const selection = window.getSelection();
-            if (selection && selection.rangeCount > 0) {
-              const range = selection.getRangeAt(0);
-              range.insertNode(img);
-              range.collapse(false);
-            } else {
-              contentRef.current.appendChild(img);
+          if (res.ok) {
+            const data = await res.json();
+            // Insere a imagem no editor
+            if (contentRef.current) {
+              const img = document.createElement('img');
+              img.src = data.url;
+              img.style.maxWidth = '100%';
+              
+              const selection = window.getSelection();
+              if (selection && selection.rangeCount > 0) {
+                const range = selection.getRangeAt(0);
+                range.insertNode(img);
+                range.collapse(false);
+              } else {
+                contentRef.current.appendChild(img);
+              }
+              
+              // Atualiza o conteúdo
+              setFormData(prev => ({
+                ...prev,
+                conteudo: contentRef.current?.innerHTML || ''
+              }));
             }
-            
-            // Atualiza o conteúdo
-            setFormData(prev => ({
-              ...prev,
-              conteudo: contentRef.current?.innerHTML || ''
-            }));
+          } else {
+            const errorData = await res.json();
+            console.error('Erro ao fazer upload da imagem:', errorData);
+            setError('Erro ao fazer upload da imagem: ' + (errorData.error || 'Erro desconhecido'));
           }
+        } catch (fetchError) {
+          console.error('Erro na requisição de upload:', fetchError);
+          setError('Erro ao fazer upload da imagem');
         }
       };
       reader.readAsDataURL(file);
     } catch (error) {
       console.error('Error uploading image:', error);
+      setError('Erro ao processar imagem');
     }
   };
 
@@ -146,7 +171,10 @@ export default function NewKnowledgePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           module_id: id,
-          ...formData,
+          system_id: formData.system_id || null,
+          titulo: formData.titulo,
+          conteudo: formData.conteudo,
+          tags: formData.tags,
         }),
       });
 
@@ -161,10 +189,17 @@ export default function NewKnowledgePage() {
           });
           formDataUpload.append('knowledge_id', data.id);
 
-          await fetch('/api/attachments', {
+          const attachRes = await fetch('/api/attachments', {
             method: 'POST',
             body: formDataUpload,
           });
+
+          if (!attachRes.ok) {
+            const attachError = await attachRes.json();
+            setError(attachError.error || 'Erro ao fazer upload dos anexos');
+            setSaving(false);
+            return;
+          }
         }
 
         router.push(`/modules/${id}`);
@@ -217,6 +252,31 @@ export default function NewKnowledgePage() {
             )}
 
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-6">
+              {/* Seleção de Sistema (obrigatório se módulo tem sistemas) */}
+              {systems.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Sistema <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={formData.system_id}
+                    onChange={(e) => setFormData({ ...formData, system_id: e.target.value })}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-white"
+                    required
+                  >
+                    <option value="">Selecione um sistema</option>
+                    {systems.map((sys) => (
+                      <option key={sys.id} value={sys.id}>
+                        {sys.nome}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Selecione o sistema ao qual este documento pertence
+                  </p>
+                </div>
+              )}
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Título

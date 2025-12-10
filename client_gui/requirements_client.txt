@@ -1,0 +1,15 @@
+# Dependências para o cliente desktop AskForge-AI
+# Instale com: pip install -r requirements_client.txt
+
+# Interface gráfica
+ttkbootstrap>=1.10.1
+
+# Requisições HTTP
+requests>=2.31.0
+
+# System tray (ícone na bandeja)
+pystray>=0.19.5
+Pillow>=10.0.0
+
+# Atalhos globais de teclado
+keyboard>=0.13.5

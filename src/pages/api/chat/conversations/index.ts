@@ -17,9 +17,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method === 'GET') {
     try {
       const conversations = await query(
-        `SELECT c.*, m.nome as module_nome 
+        `SELECT c.*, m.nome as module_nome, s.nome as system_nome 
          FROM chat_conversations c 
          JOIN modules m ON c.module_id = m.id 
+         LEFT JOIN systems s ON c.system_id = s.id
          WHERE c.user_id = ? 
          ORDER BY c.updated_at DESC`,
         [userId]

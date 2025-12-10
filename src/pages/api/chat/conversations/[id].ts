@@ -14,9 +14,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const userId = (session.user as any).id;
   const { id } = req.query;
 
-  // Verifica se a conversa pertence ao usuário
+  // Verifica se a conversa pertence ao usuário (inclui nome do sistema)
   const conversations = await query(
-    'SELECT * FROM chat_conversations WHERE id = ? AND user_id = ?',
+    `SELECT c.*, s.nome as system_nome 
+     FROM chat_conversations c 
+     LEFT JOIN systems s ON c.system_id = s.id 
+     WHERE c.id = ? AND c.user_id = ?`,
     [id, userId]
   ) as ChatConversation[];
 
@@ -32,9 +35,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         [id]
       ) as ChatMessage[];
 
+      const conversation = conversations[0];
+      
+      // Busca anexos da base de conhecimento do módulo/sistema
+      let attachmentsQuery = `SELECT a.*, kb.titulo as doc_titulo 
+         FROM attachments a 
+         INNER JOIN knowledge_base kb ON a.knowledge_id = kb.id 
+         WHERE kb.module_id = ?`;
+      let attachmentsParams: any[] = [conversation.module_id];
+      
+      if (conversation.system_id) {
+        attachmentsQuery += ` AND kb.system_id = ?`;
+        attachmentsParams.push(conversation.system_id);
+      }
+      
+      const attachmentsFromDB = await query(attachmentsQuery, attachmentsParams) as any[];
+      
+      // Formata anexos com marcadores
+      const allAttachments = attachmentsFromDB.map((att, index) => ({
+        id: `[ANEXO_${index + 1}]`,
+        url: att.file_path,
+        name: att.original_name
+      }));
+
       return res.status(200).json({
-        conversation: conversations[0],
-        messages
+        conversation,
+        messages,
+        all_knowledge_attachments: allAttachments
       });
     } catch (error) {
       console.error('Erro ao buscar conversa:', error);

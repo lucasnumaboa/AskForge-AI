@@ -35,12 +35,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const { image } = req.body;
 
     if (!image) {
+      console.error('Upload image: Imagem não fornecida no body');
       return res.status(400).json({ error: 'Imagem não fornecida' });
     }
 
     // Remove o prefixo data:image/xxx;base64,
     const matches = image.match(/^data:image\/(\w+);base64,(.+)$/);
     if (!matches) {
+      console.error('Upload image: Formato de imagem inválido');
       return res.status(400).json({ error: 'Formato de imagem inválido' });
     }
 
@@ -48,15 +50,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const base64Data = matches[2];
     const buffer = Buffer.from(base64Data, 'base64');
 
+    // Garante que o diretório existe
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
     // Gera nome único para o arquivo
     const filename = `${uuidv4()}.${extension}`;
     const filepath = path.join(uploadDir, filename);
+
+    console.log('Upload image: Salvando imagem em', filepath);
 
     // Salva o arquivo
     fs.writeFileSync(filepath, buffer);
 
     // Retorna a URL da imagem
     const imageUrl = `/uploads/images/${filename}`;
+
+    console.log('Upload image: Imagem salva com sucesso:', imageUrl);
 
     res.status(200).json({ url: imageUrl });
   } catch (error) {

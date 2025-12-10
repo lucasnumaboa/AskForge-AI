@@ -16,9 +16,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method === 'GET') {
     try {
       const knowledge = await query<any[]>(
-        `SELECT kb.*, m.nome as module_nome, u.nome as autor_nome
+        `SELECT kb.*, m.nome as module_nome, s.nome as system_nome, u.nome as autor_nome
          FROM knowledge_base kb
          LEFT JOIN modules m ON kb.module_id = m.id
+         LEFT JOIN systems s ON kb.system_id = s.id
          LEFT JOIN users u ON kb.created_by = u.id
          WHERE kb.id = ?`,
         [id]
@@ -54,7 +55,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   } else if (req.method === 'PUT') {
     try {
-      const { titulo, conteudo, tags } = req.body;
+      const { titulo, conteudo, tags, system_id } = req.body;
 
       // Busca documento
       const knowledge = await query<any[]>(
@@ -75,9 +76,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       await query(
         `UPDATE knowledge_base 
-         SET titulo = ?, conteudo = ?, tags = ?, data_atualizacao = NOW()
+         SET titulo = ?, conteudo = ?, tags = ?, system_id = ?, data_atualizacao = NOW()
          WHERE id = ?`,
-        [titulo, conteudo || '', tags || '', id]
+        [titulo, conteudo || '', tags || '', system_id || null, id]
       );
 
       res.status(200).json({ message: 'Documento atualizado com sucesso' });
